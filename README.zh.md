@@ -1,6 +1,6 @@
 [English](README.md)
 
-# Infineon BGT60ATR24C QSPI驱动扩展（NXP i.MX6ULL Linux 4.1.x）
+# Infineon BGT60ATR24C QSPI驱动扩展
 
 ![i.MX6ULL Quad SPI 连接 BGT60ATR24C](ref.png)
 
