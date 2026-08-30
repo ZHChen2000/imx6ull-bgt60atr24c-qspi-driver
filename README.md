@@ -1,6 +1,6 @@
 [中文](README.zh.md)
 
-# Infineon BGT60ATR24C QSPI driver extension
+# Infineon BGT60ATR24C QSPI Driver Extension
 
 ![i.MX6ULL Quad SPI connection to BGT60ATR24C](ref.png)
 
