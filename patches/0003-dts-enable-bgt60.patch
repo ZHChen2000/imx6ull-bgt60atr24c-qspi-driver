@@ -1,0 +1,59 @@
+--- a/arch/arm/boot/dts/imx6ull-bgt60atr24c-qspi.dtsi
++++ b/arch/arm/boot/dts/imx6ull-bgt60atr24c-qspi.dtsi
+@@ -0,0 +1,56 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * i.MX6ULL QSPI_A + Infineon BGT60ATR24C device tree overlay
++ *
++ * QSPI_A on NAND pad multiplexing:
++ *   CS   -> NAND_DQS     (QSPIA_SS0_B)
++ *   CLK  -> NAND_WP_B     (QSPIA_SCLK)
++ *   DIO0 -> NAND_READY_B  (QSPIA_DATA00)
++ *   DIO1 -> NAND_CE0_B    (QSPIA_DATA01)
++ *   DIO2 -> NAND_CE1_B    (QSPIA_DATA02)
++ *   DIO3 -> NAND_CLE      (QSPIA_DATA03)
++ *
++ * Include from board .dts, e.g.:
++ *   #include "imx6ull-bgt60atr24c-qspi.dtsi"
++ *
++ * Disable any existing SPI NOR child on &qspi before enabling BGT60.
++ */
++
++&iomuxc {
++	pinctrl_bgt60_qspi: bgt60qspigrp {
++		fsl,pins = <
++			MX6UL_PAD_NAND_DQS__QSPIA_SS0_B		0x70a1
++			MX6UL_PAD_NAND_WP_B__QSPIA_SCLK		0x70a1
++			MX6UL_PAD_NAND_READY_B__QSPIA_DATA00	0x70a1
++			MX6UL_PAD_NAND_CE0_B__QSPIA_DATA01	0x70a1
++			MX6UL_PAD_NAND_CE1_B__QSPIA_DATA02	0x70a1
++			MX6UL_PAD_NAND_CLE__QSPIA_DATA03	0x70a1
++		>;
++	};
++
++	pinctrl_bgt60_irq: bgt60irqgrp {
++		fsl,pins = <
++			MX6UL_PAD_GPIO1_IO04__GPIO1_IO04	0x17059
++		>;
++	};
++};
++
++&qspi {
++	pinctrl-names = "default";
++	pinctrl-0 = <&pinctrl_bgt60_qspi>;
++	status = "okay";
++	ddrsmp = <0>;
++
++	bgt60atr24c@0 {
++		compatible = "infineon,bgt60atr24c";
++		reg = <0>;
++		qspi-max-frequency = <25000000>;
++		pinctrl-names = "default";
++		pinctrl-0 = <&pinctrl_bgt60_irq>;
++		interrupt-parent = <&gpio1>;
++		interrupts = <4 IRQ_TYPE_EDGE_RISING>;
++		fifo-cref = <512>;
++		qspi-wait-cycles = <7>;
++		/* lfsr-test; */
++	};
++};

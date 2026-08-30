@@ -1,0 +1,40 @@
+Infineon BGT60ATR24C radar sensor (QSPI)
+
+Required properties:
+
+- compatible: Must be "infineon,bgt60atr24c"
+- reg: QSPI chip-select index, typically <0>
+- qspi-max-frequency: Maximum QSPI clock in Hz (bring-up: 25000000)
+- interrupts: BGT IRQ line (edge rising recommended)
+- interrupt-parent: GPIO controller for BGT IRQ
+
+Optional properties:
+
+- fifo-cref: SFCTL.FIFO_CREF threshold in 24-bit words (default: 512)
+- qspi-wait-cycles: SFCTL.QSPI_WT / WAIT cycles, 0-15 (default: 7)
+- lfsr-test: Enable LFSR test pattern in SFCTL for link bring-up
+- reset-gpios: GPIO connected to BGT DIO3 for hardware reset sequence
+
+Example (i.MX6ULL QSPI_A on NAND pads):
+
+	#include "imx6ull-bgt60atr24c-qspi.dtsi"
+
+Or inline:
+
+	&qspi {
+		status = "okay";
+		pinctrl-0 = <&pinctrl_qspi>;
+
+		bgt60atr24c@0 {
+			compatible = "infineon,bgt60atr24c";
+			reg = <0>;
+			qspi-max-frequency = <25000000>;
+			interrupt-parent = <&gpio1>;
+			interrupts = <4 IRQ_TYPE_EDGE_RISING>;
+			fifo-cref = <512>;
+			qspi-wait-cycles = <7>;
+		};
+	};
+
+The parent QSPI controller must use the Freescale/NXP QuadSPI driver extended
+with fsl_qspi_exec_ip_op(). Do not attach SPI NOR flash to the same QSPI bus.

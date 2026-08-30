@@ -1,0 +1,397 @@
+--- a/drivers/mtd/spi-nor/fsl-quadspi.c
++++ b/drivers/mtd/spi-nor/fsl-quadspi.c
+@@ -28,6 +28,8 @@
+ #include <linux/mtd/spi-nor.h>
+ #include <linux/mutex.h>
+ #include <linux/pm_qos.h>
++#include <linux/fsl-quadspi.h>
++#include <linux/of_platform.h>
+ 
+ /* Controller needs driver to swap endian */
+ #define QUADSPI_QUIRK_SWAP_ENDIAN	(1 << 0)
+@@ -220,6 +222,7 @@
+ /* last two lut slots for dynamic luts*/
+ #define SEQID_DYNAMIC_CMD0	14
+ #define SEQID_DYNAMIC_CMD1	15
++#define SEQID_BGT_IP_OP		SEQID_DYNAMIC_CMD0
+ 
+ #define QUADSPI_MIN_IOMAP SZ_4M
+ 
+@@ -322,7 +325,38 @@
+ 	u32 ddr_smp;
+ 	struct mutex lock;
+ 	struct pm_qos_request pm_qos_req;
++	bool has_bgt;
++	bool bgt_only;
+ };
++
++static bool fsl_qspi_node_is_bgt(const struct device_node *np)
++{
++	return of_device_is_compatible(np, "infineon,bgt60atr24c");
++}
++
++static int fsl_qspi_count_nor_children(struct device_node *np)
++{
++	struct device_node *child;
++	int count = 0;
++
++	for_each_available_child_of_node(np, child) {
++		if (fsl_qspi_node_is_bgt(child))
++			continue;
++		count++;
++	}
++	return count;
++}
++
++static bool fsl_qspi_has_bgt_child(struct device_node *np)
++{
++	struct device_node *child;
++
++	for_each_available_child_of_node(np, child) {
++		if (fsl_qspi_node_is_bgt(child))
++			return true;
++	}
++	return false;
++}
+ 
+ static inline int needs_swap_endian(struct fsl_qspi *q)
+ {
+@@ -668,6 +702,251 @@
+ 	return err;
+ }
+ 
++static int fsl_qspi_trigger_seqid(struct fsl_qspi *q, u8 seqid, unsigned int addr,
++				  int len)
++{
++	void __iomem *base = q->iobase;
++	u32 reg, reg2;
++	int err;
++
++	init_completion(&q->c);
++
++	reg = readl(base + QUADSPI_MCR);
++	writel(q->memmap_phy + q->chip_base_addr + addr, base + QUADSPI_SFAR);
++	writel(QUADSPI_RBCT_WMRK_MASK | QUADSPI_RBCT_RXBRD_USEIPS,
++	       base + QUADSPI_RBCT);
++	writel(reg | QUADSPI_MCR_CLR_RXF_MASK | QUADSPI_MCR_CLR_TXF_MASK,
++	       base + QUADSPI_MCR);
++
++	do {
++		reg2 = readl(base + QUADSPI_SR);
++		if (reg2 & (QUADSPI_SR_IP_ACC_MASK | QUADSPI_SR_AHB_ACC_MASK)) {
++			udelay(1);
++			continue;
++		}
++		break;
++	} while (1);
++
++	writel((seqid << QUADSPI_IPCR_SEQID_SHIFT) | len, base + QUADSPI_IPCR);
++
++	if (!wait_for_completion_timeout(&q->c, msecs_to_jiffies(1000))) {
++		dev_err(q->dev,
++			"seqid %u timeout, addr@%.8x, FR:0x%.8x, SR:0x%.8x\n",
++			seqid, addr, readl(base + QUADSPI_FR),
++			readl(base + QUADSPI_SR));
++		err = -ETIMEDOUT;
++	} else {
++		err = 0;
++	}
++
++	writel(reg, base + QUADSPI_MCR);
++
++	return err;
++}
++
++static int fsl_qspi_program_ip_lut(struct fsl_qspi *q,
++				   const struct fsl_qspi_ip_op *op)
++{
++	void __iomem *base = q->iobase;
++	u32 lut_base = SEQID_BGT_IP_OP * 4;
++	int rxfifo = q->devtype_data->rxfifo;
++	u32 read_len;
++	u32 lut[MAX_LUT_REGS];
++	int slots = 0;
++	int i;
++
++	memset(lut, 0, sizeof(lut));
++
++	if (op->cmd_buswidth != 1 && op->cmd_buswidth != 4)
++		return -EINVAL;
++	if (op->data_buswidth != 1 && op->data_buswidth != 4)
++		return -EINVAL;
++
++	if (op->cmd_buswidth == 4) {
++		/* BGT QSPI: 8-bit address + WAIT + READ/WRITE */
++		lut[0] = LUT0(CMD, PAD4, op->cmd) |
++			 LUT1(DUMMY, PAD4, op->dummy_cycles);
++		if (op->data_in) {
++			read_len = op->nbytes;
++			if (read_len > rxfifo)
++				read_len = rxfifo;
++			lut[1] = LUT0(READ, PAD4, read_len) |
++				 LUT1(STOP, PAD1, 0);
++		} else {
++			lut[1] = LUT0(WRITE, PAD4, op->nbytes) |
++				 LUT1(STOP, PAD1, 0);
++		}
++		slots = 2;
++	} else if (op->data_in) {
++		lut[0] = LUT0(CMD, PAD1, op->cmd) |
++			 LUT1(READ, PAD1, op->nbytes);
++		lut[1] = LUT0(STOP, PAD1, 0);
++		slots = 2;
++	} else if (op->nbytes) {
++		lut[0] = LUT0(CMD, PAD1, op->cmd) |
++			 LUT1(WRITE, PAD1, op->nbytes);
++		lut[1] = LUT0(STOP, PAD1, 0);
++		slots = 2;
++	} else {
++		lut[0] = LUT0(CMD, PAD1, op->cmd) | LUT1(STOP, PAD1, 0);
++		slots = 1;
++	}
++
++	fsl_qspi_unlock_lut(q);
++	for (i = slots; i < MAX_LUT_REGS; i++)
++		lut[i] = 0;
++	for (i = 0; i < MAX_LUT_REGS; i++)
++		writel(lut[i], base + QUADSPI_LUT(lut_base + i));
++	fsl_qspi_lock_lut(q);
++
++	return 0;
++}
++
++static void fsl_qspi_write_tx_data(struct fsl_qspi *q, const u8 *buf, size_t len)
++{
++	u32 tmp;
++	size_t i, words;
++	int j;
++
++	tmp = readl(q->iobase + QUADSPI_MCR);
++	writel(tmp | QUADSPI_MCR_CLR_TXF_MASK, q->iobase + QUADSPI_MCR);
++
++	words = (len + 3) / 4;
++	for (j = 0; j < words; j++) {
++		tmp = 0;
++		for (i = 0; i < 4 && (j * 4 + i) < len; i++)
++			tmp |= buf[j * 4 + i] << (8 * (3 - i));
++		tmp = fsl_qspi_endian_xchg(q, tmp);
++		writel(tmp, q->iobase + QUADSPI_TBDR);
++	}
++
++	if (needs_fill_txfifo(q))
++		for (; j < 4; j++)
++			writel(tmp, q->iobase + QUADSPI_TBDR);
++}
++
++static int fsl_qspi_bgt_controller_setup(struct fsl_qspi *q, u32 clk_rate)
++{
++	void __iomem *base = q->iobase;
++	u32 reg;
++	int ret, i;
++
++	if (!clk_rate)
++		clk_rate = 25000000;
++
++	q->clk_rate = clk_rate;
++	q->chip_base_addr = 0;
++	q->nor_size = 0;
++
++	fsl_qspi_clk_disable_unprep(q);
++	ret = clk_set_rate(q->clk, clk_rate);
++	if (ret)
++		return ret;
++
++	ret = fsl_qspi_clk_prep_enable(q);
++	if (ret)
++		return ret;
++
++	if (q->devtype_data->devtype == FSL_QUADSPI_IMX6UL ||
++	    q->devtype_data->devtype == FSL_QUADSPI_IMX7D) {
++		reg = readl(base + QUADSPI_MCR);
++		writel(~QUADSPI_MCR_DDR_EN_MASK & reg, base + QUADSPI_MCR);
++		udelay(1);
++	}
++
++	writel(QUADSPI_MCR_SWRSTSD_MASK | QUADSPI_MCR_SWRSTHD_MASK,
++	       base + QUADSPI_MCR);
++	udelay(1);
++
++	fsl_qspi_unlock_lut(q);
++	for (i = 0; i < QUADSPI_LUT_NUM; i++)
++		writel(0, base + QUADSPI_LUT_BASE + i * 4);
++	fsl_qspi_lock_lut(q);
++
++	writel(QUADSPI_MCR_MDIS_MASK | QUADSPI_MCR_RESERVED_MASK,
++	       base + QUADSPI_MCR);
++
++	reg = readl(base + QUADSPI_SMPR);
++	writel(reg & ~(QUADSPI_SMPR_FSDLY_MASK |
++		       QUADSPI_SMPR_FSPHS_MASK |
++		       QUADSPI_SMPR_HSENA_MASK |
++		       QUADSPI_SMPR_DDRSMP_MASK), base + QUADSPI_SMPR);
++
++	writel(QUADSPI_MCR_RESERVED_MASK | QUADSPI_MCR_END_CFG_MASK,
++	       base + QUADSPI_MCR);
++	writel(0xffffffff, base + QUADSPI_FR);
++	writel(QUADSPI_RSER_TFIE, base + QUADSPI_RSER);
++
++	return 0;
++}
++
++struct fsl_qspi *fsl_qspi_get_controller(struct device *dev)
++{
++	struct platform_device *pdev;
++	struct device *qdev;
++
++	if (!dev)
++		return NULL;
++
++	qdev = dev;
++	if (dev->parent && dev->parent->of_node &&
++	    (of_device_is_compatible(dev->parent->of_node, "fsl,imx6ull-qspi") ||
++	     of_device_is_compatible(dev->parent->of_node, "fsl,imx6ul-qspi")))
++		qdev = dev->parent;
++
++	if (!qdev->of_node)
++		return NULL;
++
++	if (!of_device_is_compatible(qdev->of_node, "fsl,imx6ull-qspi") &&
++	    !of_device_is_compatible(qdev->of_node, "fsl,imx6ul-qspi") &&
++	    !of_device_is_compatible(qdev->of_node, "fsl,imx6sx-qspi") &&
++	    !of_device_is_compatible(qdev->of_node, "fsl,imx7d-qspi") &&
++	    !of_device_is_compatible(qdev->of_node, "fsl,vf610-qspi"))
++		return NULL;
++
++	pdev = to_platform_device(qdev);
++	if (!pdev)
++		return NULL;
++
++	return platform_get_drvdata(pdev);
++}
++EXPORT_SYMBOL_GPL(fsl_qspi_get_controller);
++
++int fsl_qspi_exec_ip_op(struct fsl_qspi *q, const struct fsl_qspi_ip_op *op)
++{
++	int ret;
++
++	if (!q || !op)
++		return -EINVAL;
++
++	mutex_lock(&q->lock);
++
++	ret = fsl_qspi_clk_prep_enable(q);
++	if (ret)
++		goto out_unlock;
++
++	ret = fsl_qspi_program_ip_lut(q, op);
++	if (ret)
++		goto out_clk;
++
++	if (!op->data_in && op->buf && op->nbytes)
++		fsl_qspi_write_tx_data(q, op->buf, op->nbytes);
++
++	ret = fsl_qspi_trigger_seqid(q, SEQID_BGT_IP_OP, 0, op->nbytes);
++	if (ret)
++		goto out_clk;
++
++	if (op->data_in && op->buf && op->nbytes)
++		fsl_qspi_read_data(q, op->nbytes, op->buf);
++
++out_clk:
++	fsl_qspi_clk_disable_unprep(q);
++out_unlock:
++	mutex_unlock(&q->lock);
++
++	return ret;
++}
++EXPORT_SYMBOL_GPL(fsl_qspi_exec_ip_op);
+ 
+ /* Read out the data from the QUADSPI_RBDR buffer registers. */
+ static void fsl_qspi_read_data(struct fsl_qspi *q, int len, u8 *rxbuf)
+@@ -1127,8 +1406,14 @@
+ 	if (!q)
+ 		return -ENOMEM;
+ 
+-	q->nor_num = of_get_child_count(dev->of_node);
+-	if (!q->nor_num || q->nor_num > FSL_QSPI_MAX_CHIP)
++	q->nor_num = fsl_qspi_count_nor_children(dev->of_node);
++	q->has_bgt = fsl_qspi_has_bgt_child(dev->of_node);
++	q->bgt_only = q->has_bgt && !q->nor_num;
++
++	if (q->nor_num > FSL_QSPI_MAX_CHIP)
++		return -ENODEV;
++
++	if (!q->nor_num && !q->has_bgt)
+ 		return -ENODEV;
+ 
+ 	q->dev = dev;
+@@ -1195,20 +1480,40 @@
+ 		goto irq_failed;
+ 	}
+ 
+-	ret = fsl_qspi_nor_setup(q);
+-	if (ret)
+-		goto irq_failed;
++	if (q->bgt_only) {
++		u32 bgt_freq = 25000000;
++		struct device_node *bgt_np;
++
++		bgt_np = of_get_compatible_child(dev->of_node,
++						 "infineon,bgt60atr24c");
++		if (bgt_np) {
++			of_property_read_u32(bgt_np, "qspi-max-frequency",
++					     &bgt_freq);
++			of_node_put(bgt_np);
++		}
++
++		ret = fsl_qspi_bgt_controller_setup(q, bgt_freq);
++		if (ret)
++			goto irq_failed;
++	} else {
++		ret = fsl_qspi_nor_setup(q);
++		if (ret)
++			goto irq_failed;
++	}
+ 
+ 	if (of_get_property(np, "fsl,qspi-has-second-chip", NULL))
+ 		q->has_second_chip = true;
+ 
+ 	mutex_init(&q->lock);
+ 
+-	/* iterate the subnodes. */
++	/* iterate the NOR flash subnodes */
+ 	for_each_available_child_of_node(dev->of_node, np) {
+ 		enum read_mode mode = SPI_NOR_QUAD;
+ 		char modalias[40];
+ 		u32 dummy = 0;
++
++		if (fsl_qspi_node_is_bgt(np))
++			continue;
+ 
+ 		/* skip the holes */
+ 		if (!q->has_second_chip)
+@@ -1284,9 +1589,21 @@
+ 	}
+ 
+ 	/* finish the rest init. */
+-	ret = fsl_qspi_nor_setup_last(q);
+-	if (ret)
+-		goto last_init_failed;
++	if (q->nor_num) {
++		ret = fsl_qspi_nor_setup_last(q);
++		if (ret)
++			goto last_init_failed;
++	}
++
++	if (q->has_bgt) {
++		struct device_node *child;
++
++		for_each_available_child_of_node(dev->of_node, child) {
++			if (!fsl_qspi_node_is_bgt(child))
++				continue;
++			of_platform_device_create(child, NULL, dev);
++		}
++	}
+ 
+ 	fsl_qspi_clk_disable_unprep(q);
+ 	return 0;
