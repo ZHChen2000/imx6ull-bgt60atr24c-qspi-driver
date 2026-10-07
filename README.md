@@ -37,9 +37,19 @@ patch -p1 < patches/0003-dts-enable-bgt60.patch
 
 ## Kernel configuration
 
+Enable at minimum:
+
 ```
 CONFIG_SPI_FSL_QUADSPI=y
 CONFIG_BGT60ATR24C=m
+```
+
+A ready-made fragment lives at `kernel/configs/bgt60_defconfig.fragment` (includes MTD/QSPI deps). Merge it into your kernel `.config`:
+
+```bash
+cd /path/to/linux-4.1.15
+./scripts/kconfig/merge_config.sh -m .config /path/to/imx6ull-bgt60atr24c-qspi-driver/kernel/configs/bgt60_defconfig.fragment
+make olddefconfig
 ```
 
 ## Device tree
@@ -67,8 +77,11 @@ make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- modules
 
 ## Optional tool
 
+From the repo: `cd tools && make` uses `kernel/include/uapi` for `linux/bgt60atr24c.h`. With a full kernel tree:
+
 ```bash
-cd tools && make
+cd tools
+make KERNEL_SRC=/path/to/linux-4.1.15
 ./bgt60_capture -n 10
 ```
 

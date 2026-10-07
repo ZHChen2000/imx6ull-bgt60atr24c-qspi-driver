@@ -37,9 +37,19 @@ patch -p1 < patches/0003-dts-enable-bgt60.patch
 
 ## 内核配置
 
+需要打开（或在 menuconfig 里选）：
+
 ```
 CONFIG_SPI_FSL_QUADSPI=y
 CONFIG_BGT60ATR24C=m
+```
+
+仓库里有一份配置片段 `kernel/configs/bgt60_defconfig.fragment`（含 MTD/QSPI 依赖项）。在内核源码目录里合并到现有 `.config` 例如：
+
+```bash
+cd /path/to/linux-4.1.15
+./scripts/kconfig/merge_config.sh -m .config /path/to/imx6ull-bgt60atr24c-qspi-driver/kernel/configs/bgt60_defconfig.fragment
+make olddefconfig
 ```
 
 ## 设备树
@@ -67,8 +77,11 @@ make ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- modules
 
 ## 可选工具
 
+在仓库根目录执行 `cd tools && make` 即可编译；Makefile 默认用本仓库的 `kernel/include/uapi` 里的头文件。若已在板子上装好内核头，可指定：
+
 ```bash
-cd tools && make
+cd tools
+make KERNEL_SRC=/path/to/linux-4.1.15
 ./bgt60_capture -n 10
 ```
 

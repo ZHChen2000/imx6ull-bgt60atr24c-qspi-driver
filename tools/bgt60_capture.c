@@ -1,8 +1,10 @@
 /*
  * Minimal userspace capture example for /dev/bgt60atr24c
  *
- * Build (with kernel headers installed):
- *   ${CC} -O2 -o bgt60_capture bgt60_capture.c
+ * Build from tools/:
+ *   make
+ * Or with installed kernel headers:
+ *   make KERNEL_SRC=/path/to/linux-4.1.15
  */
 #include <errno.h>
 #include <fcntl.h>
