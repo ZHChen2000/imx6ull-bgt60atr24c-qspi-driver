@@ -95,4 +95,4 @@ E-mail : zhchen2000@foxmail.com
 
 ## 更新说明
 
-**2026-10-07** — 内核配置一节补充 `bgt60_defconfig.fragment` 合并步骤（`merge_config.sh` 与 `olddefconfig`）。`tools/Makefile` 默认引用本仓库 uapi 头文件，克隆后在 `tools` 目录 `make` 即可编 `bgt60_capture`；板端可用 `KERNEL_SRC` 指向内核树。驱动与 patches 未改。
+**2026-10-07** — 这次只改了文档和示例程序怎么编，驱动和补丁没动。说明里补了：仓库里那份内核配置片段该怎么并进自己的 .config。以前在本机编采集示例经常缺头文件，现在在 tools 目录里直接 make 一般就能过；在板子上编的话，Makefile 仍可以用 KERNEL_SRC 指定你的内核源码路径。

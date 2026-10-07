@@ -95,4 +95,4 @@ E-mail: zhchen2000@foxmail.com
 
 ## Release notes
 
-**2026-10-07** — Kernel config docs: merge `bgt60_defconfig.fragment` with `merge_config.sh` and `olddefconfig`. Tools use in-repo uapi headers by default (`make` in `tools/`); on the board, set `KERNEL_SRC` to your kernel tree. Driver and patches unchanged.
+**2026-10-07** — Docs and sample-app build only; the driver and patches are the same. The README now walks through using the bundled kernel config snippet with your `.config`. The capture example used to fail on a dev PC because headers were missing—`make` under `tools/` should work after clone. On the board, you can still pass `KERNEL_SRC` if your kernel lives elsewhere.
