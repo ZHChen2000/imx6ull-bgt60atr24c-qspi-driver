@@ -95,4 +95,4 @@ E-mail: zhchen2000@foxmail.com
 
 ## Release notes
 
-**2026-10-07** — Docs and sample-app build only; the driver and patches are the same. The README now walks through using the bundled kernel config snippet with your `.config`. The capture example used to fail on a dev PC because headers were missing—`make` under `tools/` should work after clone. On the board, you can still pass `KERNEL_SRC` if your kernel lives elsewhere.
+**2026-10-07** — Added instructions for merging the kernel config fragment. Updated the tools Makefile to use this repository’s uapi headers when building the capture example, with optional `KERNEL_SRC` for a separate kernel tree.
