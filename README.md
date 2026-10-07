@@ -95,4 +95,6 @@ E-mail: zhchen2000@foxmail.com
 
 ## Release notes
 
-**2026-10-07** — Added instructions for merging the kernel config fragment. Updated the tools Makefile to use this repository’s uapi headers when building the capture example, with optional `KERNEL_SRC` for a separate kernel tree.
+**2026-10-07** — Document merging the kernel config fragment; the tools Makefile defaults to this repository’s uapi headers, with optional `KERNEL_SRC`.
+
+**2026-10-07** — Add a QSPI contiguous-read API for the BGT FIFO; the BGT driver uses it to reduce repeated locking and LUT programming.

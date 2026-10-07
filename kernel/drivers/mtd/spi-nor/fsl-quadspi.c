@@ -973,6 +973,53 @@ static void fsl_qspi_read_data(struct fsl_qspi *q, int len, u8 *rxbuf)
 	}
 }
 
+int fsl_qspi_exec_ip_read(struct fsl_qspi *q, const struct fsl_qspi_ip_op *op)
+{
+	size_t remaining;
+	u8 *rx;
+	int rxfifo;
+	int ret;
+
+	if (!q || !op || !op->data_in || !op->buf || !op->nbytes)
+		return -EINVAL;
+	if (op->cmd_buswidth != 4 || op->data_buswidth != 4)
+		return -EINVAL;
+
+	mutex_lock(&q->lock);
+
+	ret = fsl_qspi_clk_prep_enable(q);
+	if (ret)
+		goto out_unlock;
+
+	ret = fsl_qspi_program_ip_lut(q, op);
+	if (ret)
+		goto out_clk;
+
+	rxfifo = q->devtype_data->rxfifo;
+	remaining = op->nbytes;
+	rx = op->buf;
+
+	while (remaining > 0) {
+		size_t step = min_t(size_t, remaining, (size_t)rxfifo);
+
+		ret = fsl_qspi_trigger_seqid(q, SEQID_BGT_IP_OP, 0, step);
+		if (ret)
+			goto out_clk;
+
+		fsl_qspi_read_data(q, step, rx);
+		rx += step;
+		remaining -= step;
+	}
+
+out_clk:
+	fsl_qspi_clk_disable_unprep(q);
+out_unlock:
+	mutex_unlock(&q->lock);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(fsl_qspi_exec_ip_read);
+
 /*
  * If we have changed the content of the flash by writing or erasing,
  * we need to invalidate the AHB buffer. If we do not do so, we may read out

@@ -29,8 +29,6 @@
 #define BGT60_DEVICE_NAME		"bgt60atr24c"
 #define BGT60_RING_SIZE_DEFAULT		(256 * 1024)
 #define BGT60_MAX_FRAME_PAYLOAD		(8192 * 3)
-#define BGT60_QSPI_CHUNK_MAX		384
-
 struct bgt60_dev {
 	struct device *dev;
 	struct fsl_qspi *qspi;
@@ -121,34 +119,25 @@ static int bgt60_reg_write(struct bgt60_dev *bgt, u8 reg, u32 val)
 static int bgt60_qspi_read(struct bgt60_dev *bgt, u8 addr, u8 *buf, size_t len)
 {
 	struct fsl_qspi_ip_op op;
-	size_t done = 0;
 	int ret;
 
 	if (addr >= BGT60_QSPI_ADDR_MAX)
 		return -EINVAL;
 
-	while (done < len) {
-		size_t chunk = min_t(size_t, len - done, BGT60_QSPI_CHUNK_MAX);
+	memset(&op, 0, sizeof(op));
+	op.cmd = addr;
+	op.cmd_buswidth = 4;
+	op.data_buswidth = 4;
+	op.dummy_cycles = bgt->qspi_wait;
+	op.data_in = true;
+	op.nbytes = len;
+	op.buf = buf;
 
-		memset(&op, 0, sizeof(op));
-		op.cmd = addr;
-		op.cmd_buswidth = 4;
-		op.data_buswidth = 4;
-		op.dummy_cycles = bgt->qspi_wait;
-		op.data_in = true;
-		op.nbytes = chunk;
-		op.buf = buf + done;
+	ret = fsl_qspi_exec_ip_read(bgt->qspi, &op);
+	if (ret)
+		bgt->counters.controller_err++;
 
-		ret = fsl_qspi_exec_ip_op(bgt->qspi, &op);
-		if (ret) {
-			bgt->counters.controller_err++;
-			return ret;
-		}
-
-		done += chunk;
-	}
-
-	return 0;
+	return ret;
 }
 
 static int bgt60_hw_reset(struct bgt60_dev *bgt)

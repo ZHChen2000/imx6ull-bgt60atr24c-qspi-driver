@@ -39,6 +39,7 @@ struct fsl_qspi_ip_op {
 
 struct fsl_qspi *fsl_qspi_get_controller(struct device *dev);
 int fsl_qspi_exec_ip_op(struct fsl_qspi *q, const struct fsl_qspi_ip_op *op);
+int fsl_qspi_exec_ip_read(struct fsl_qspi *q, const struct fsl_qspi_ip_op *op);
 
 #else
 
@@ -49,6 +50,12 @@ static inline struct fsl_qspi *fsl_qspi_get_controller(struct device *dev)
 
 static inline int fsl_qspi_exec_ip_op(struct fsl_qspi *q,
 				      const struct fsl_qspi_ip_op *op)
+{
+	return -ENODEV;
+}
+
+static inline int fsl_qspi_exec_ip_read(struct fsl_qspi *q,
+					const struct fsl_qspi_ip_op *op)
 {
 	return -ENODEV;
 }
