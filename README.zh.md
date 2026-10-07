@@ -92,3 +92,7 @@ GPL-2.0
 ## 联系方式
 
 E-mail : zhchen2000@foxmail.com
+
+## 更新说明
+
+**2026-10-07** — 内核配置一节补充 `bgt60_defconfig.fragment` 合并步骤（`merge_config.sh` 与 `olddefconfig`）。`tools/Makefile` 默认引用本仓库 uapi 头文件，克隆后在 `tools` 目录 `make` 即可编 `bgt60_capture`；板端可用 `KERNEL_SRC` 指向内核树。驱动与 patches 未改。

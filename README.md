@@ -92,3 +92,7 @@ GPL-2.0
 ## Contact
 
 E-mail: zhchen2000@foxmail.com
+
+## Release notes
+
+**2026-10-07** — Kernel config docs: merge `bgt60_defconfig.fragment` with `merge_config.sh` and `olddefconfig`. Tools use in-repo uapi headers by default (`make` in `tools/`); on the board, set `KERNEL_SRC` to your kernel tree. Driver and patches unchanged.
