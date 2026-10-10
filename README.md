@@ -95,6 +95,8 @@ E-mail: zhchen2000@foxmail.com
 
 ## Release notes
 
+**2026-10-11** — BGT driver keeps a probe-time FIFO read buffer instead of per-IRQ kmalloc; transient QSPI read failures trigger limited auto-recover before entering ERROR.
+
 **2026-10-07** — Document merging the kernel config fragment; the tools Makefile defaults to this repository’s uapi headers, with optional `KERNEL_SRC`.
 
 **2026-10-07** — Add a QSPI contiguous-read API for the BGT FIFO; the BGT driver uses it to reduce repeated locking and LUT programming.

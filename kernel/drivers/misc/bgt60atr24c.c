@@ -29,6 +29,8 @@
 #define BGT60_DEVICE_NAME		"bgt60atr24c"
 #define BGT60_RING_SIZE_DEFAULT		(256 * 1024)
 #define BGT60_MAX_FRAME_PAYLOAD		(8192 * 3)
+#define BGT60_FIFO_BUF_MAX_BYTES	(8191U * BGT60_REG_WIDTH)
+#define BGT60_AUTO_RECOVER_MAX		3
 struct bgt60_dev {
 	struct device *dev;
 	struct fsl_qspi *qspi;
@@ -50,6 +52,8 @@ struct bgt60_dev {
 
 	u32 frame_seq;
 	struct bgt60_counters counters;
+	u8 *fifo_buf;
+	u32 auto_recover_count;
 };
 
 static u32 bgt60_unpack_be24(const u8 *buf)
@@ -292,34 +296,36 @@ static int bgt60_ring_push_frame(struct bgt60_dev *bgt, const u8 *payload,
 	return 0;
 }
 
+static bool bgt60_try_auto_recover(struct bgt60_dev *bgt);
+
 static void bgt60_drain_fifo(struct bgt60_dev *bgt)
 {
 	size_t chunk_bytes;
-	u8 *buf;
 	u32 flags;
 	int ret;
 
-	if (bgt->fifo_cref == 0)
+	if (bgt->fifo_cref == 0 || !bgt->fifo_buf)
 		return;
 
 	chunk_bytes = (size_t)bgt->fifo_cref * BGT60_REG_WIDTH;
-	buf = kmalloc(chunk_bytes, GFP_KERNEL);
-	if (!buf)
+	if (chunk_bytes > BGT60_FIFO_BUF_MAX_BYTES)
 		return;
 
-	ret = bgt60_qspi_read(bgt, BGT60_FIFO_ADDR, buf, chunk_bytes);
+	ret = bgt60_qspi_read(bgt, BGT60_FIFO_ADDR, bgt->fifo_buf, chunk_bytes);
 	if (ret) {
 		bgt->counters.qspi_timeout++;
+		if (bgt60_try_auto_recover(bgt))
+			return;
 		bgt->state = BGT60_STATE_ERROR;
-		kfree(buf);
+		wake_up_interruptible(&bgt->waitq);
 		return;
 	}
 
 	flags = bgt60_sample_fstat_flags(bgt);
-	if (bgt60_ring_push_frame(bgt, buf, chunk_bytes, flags))
+	if (bgt60_ring_push_frame(bgt, bgt->fifo_buf, chunk_bytes, flags))
 		bgt->counters.user_drop++;
-
-	kfree(buf);
+	else
+		bgt->auto_recover_count = 0;
 }
 
 static int bgt60_do_stop(struct bgt60_dev *bgt)
@@ -359,7 +365,42 @@ static int bgt60_do_recover(struct bgt60_dev *bgt)
 		return ret;
 
 	bgt->state = BGT60_STATE_IDLE;
+	bgt->auto_recover_count = 0;
 	return 0;
+}
+
+static bool bgt60_try_auto_recover(struct bgt60_dev *bgt)
+{
+	bool resume;
+	int ret;
+
+	if (bgt->auto_recover_count >= BGT60_AUTO_RECOVER_MAX)
+		return false;
+
+	resume = (bgt->state == BGT60_STATE_STREAMING);
+	bgt->state = BGT60_STATE_IDLE;
+	bgt60_ring_reset(bgt);
+
+	ret = bgt60_fifo_reset(bgt);
+	if (ret)
+		return false;
+
+	ret = bgt60_hw_reset(bgt);
+	if (ret)
+		return false;
+
+	bgt->auto_recover_count++;
+	if (resume) {
+		ret = bgt60_do_start(bgt);
+		if (ret) {
+			bgt->state = BGT60_STATE_ERROR;
+			wake_up_interruptible(&bgt->waitq);
+			return false;
+		}
+	}
+
+	wake_up_interruptible(&bgt->waitq);
+	return true;
 }
 
 static irqreturn_t bgt60_irq_thread(int irq, void *data)
@@ -658,6 +699,10 @@ static int bgt60_probe(struct platform_device *pdev)
 		return ret;
 
 	bgt60_recalc_frame_bytes(bgt);
+
+	bgt->fifo_buf = devm_kmalloc(dev, BGT60_FIFO_BUF_MAX_BYTES, GFP_KERNEL);
+	if (!bgt->fifo_buf)
+		return -ENOMEM;
 
 	ret = sysfs_create_group(&dev->kobj, &bgt60_attr_group);
 	if (ret)
